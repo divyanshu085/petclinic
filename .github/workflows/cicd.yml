@@ -77,7 +77,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-          cache: mavendocker start petclinic
+          cache: maven
 
       - name: Give Maven wrapper permission
         run: chmod +x mvnw
