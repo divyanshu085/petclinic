@@ -2,77 +2,216 @@ name: Java Maven CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - main
+
+env:
+  JAVA_VERSION: '17'
+  ARTIFACT_NAME: java-app-jar
 
 jobs:
 
-  build-test:
-    name: Build and Test
+# =========================
+# 1. BUILD JOB
+# =========================
+  build:
+    name: Build Project
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Setup JDK
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
 
-      - name: Cache Maven Packages
-        uses: actions/cache@v4
+      - name: Give Maven Wrapper Permission
+        run: chmod +x mvnw
+
+      - name: Compile Project
+        run: ./mvnw clean compile
+
+      - name: Notify Build Success
+        if: success()
+        run: echo "Build Job Completed Successfully"
+
+      - name: Notify Build Failure
+        if: failure()
+        run: echo "Build Job Failed"
+
+
+# =========================
+# 2. TEST JOB
+# =========================
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
         with:
-          path: ~/.m2
-          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-m2
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
 
-      - name: Build Project
-        run: mvn clean install
+      - name: Run Tests
+        run: ./mvnw test
 
-      - name: Run Unit Tests
-        run: mvn test
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: target/surefire-reports/
+
+      - name: Notify Test Success
+        if: success()
+        run: echo "Test Job Completed Successfully"
+
+      - name: Notify Test Failure
+        if: failure()
+        run: echo "Test Job Failed"
+
+
+# =========================
+# 3. CHECKSTYLE JOB
+# =========================
+  checkstyle:
+    name: Checkstyle Scan
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
 
       - name: Run Checkstyle
-        run: mvn checkstyle:check
+        run: ./mvnw checkstyle:check
+
+      - name: Upload Checkstyle Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkstyle-report
+          path: target/checkstyle-result.xml
+
+      - name: Notify Checkstyle Success
+        if: success()
+        run: echo "Checkstyle Job Completed Successfully"
+
+      - name: Notify Checkstyle Failure
+        if: failure()
+        run: echo "Checkstyle Job Failed"
+
+
+# =========================
+# 4. PACKAGE JOB
+# =========================
+  package:
+    name: Package JAR
+    runs-on: ubuntu-latest
+    needs: checkstyle
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Build JAR File
+        run: ./mvnw clean package -DskipTests
 
       - name: Upload JAR Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: java-app-jar
+          name: ${{ env.ARTIFACT_NAME }}
           path: target/*.jar
 
+      - name: Notify Package Success
+        if: success()
+        run: echo "Package Job Completed Successfully"
 
-  trivy-security-scan:
+      - name: Notify Package Failure
+        if: failure()
+        run: echo "Package Job Failed"
+
+
+# =========================
+# 5. TRIVY SECURITY SCAN
+# =========================
+  trivy-scan:
     name: Trivy Security Scan
     runs-on: ubuntu-latest
-    needs: build-test
+    needs: package
 
     steps:
-
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Run Trivy Filesystem Scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.24.0
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: 'CRITICAL,HIGH'
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 1
 
-      - name: Run Trivy Dependency Scan
-        uses: aquasecurity/trivy-action@master
+      - name: Upload Trivy Report
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          vuln-type: 'library'
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: 'CRITICAL,HIGH'
+          name: trivy-report
+          path: trivy-results.sarif
+
+      - name: Notify Trivy Success
+        if: success()
+        run: echo "Trivy Scan Completed Successfully"
+
+      - name: Notify Trivy Failure
+        if: failure()
+        run: echo "Trivy Scan Failed"
+
+
+# =========================
+# 6. FINAL PIPELINE STATUS
+# =========================
+  pipeline-status:
+    name: Pipeline Final Status
+    runs-on: ubuntu-latest
+    needs:
+      - build
+      - test
+      - checkstyle
+      - package
+      - trivy-scan
+
+    if: always()
+
+    steps:
+      - name: Pipeline Success
+        if: success()
+        run: echo "Entire CI/CD Pipeline Completed Successfully"
+
+      - name: Pipeline Failure
+        if: failure()
+        run: echo "Pipeline Failed"
