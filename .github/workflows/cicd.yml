@@ -83,12 +83,12 @@ jobs:
         run: chmod +x mvnw
 
       - name: Build Docker Image
-        run: docker build -t petclinic-app .
+        run: docker build -t petapp .
 
       - name: Upload Docker Image
         uses: actions/upload-artifact@v4
         with:
-          name: petclinic-app
+          name: petapp
           path: petclinic-app.tar
 
       - name: Login to Docker Hub
